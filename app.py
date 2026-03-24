@@ -39,7 +39,7 @@ with col1:
 with col2:
     class_name = st.selectbox(
         "Class",
-        options=("Class 6","Class 7","Class 8","Class 9", "Class 10", "Class 11", "Class 12")
+        options=("CLASS 6","CLASS 7","CLASS 8","CLASS 9", "CLASS 10", "CLASS 11", "CLASS 12")
     )
     
 if "sample_answer_html" not in st.session_state:
