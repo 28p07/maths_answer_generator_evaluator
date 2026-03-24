@@ -17,11 +17,11 @@ class Input(BaseModel):
     question_type: str = Field(..., description="Question type")
 
 
-# EVALUATOR_API = "https://chat-backend-test.prepzy.ai/maths-answer-evaluator"
-# SAMPLE_API = "https://chat-backend-test.prepzy.ai/maths-sample-answer-generator"
+EVALUATOR_API = "https://chat-backend-test.prepzy.ai/maths-answer-evaluator"
+SAMPLE_API = "https://chat-backend-test.prepzy.ai/maths-sample-answer-generator"
 
-EVALUATOR_API = "http://127.0.0.1:8000/maths-answer-evaluator"
-SAMPLE_API = "http://127.0.0.1:8000/maths-sample-answer-generator"
+# EVALUATOR_API = "http://127.0.0.1:8000/maths-answer-evaluator"
+# SAMPLE_API = "http://127.0.0.1:8000/maths-sample-answer-generator"
 
 st.set_page_config(page_title="CBSE Answer Evaluator", layout="centered")
 
