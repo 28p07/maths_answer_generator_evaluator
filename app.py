@@ -1,268 +1,225 @@
+import base64
 import requests
 import streamlit as st
-from typing import Optional
-from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field
-import streamlit.components.v1 as components
-from image_description import generate_image_description
 
-
-class Input(BaseModel):
-    question: str = Field(..., description="Question")
-    reference_answer: str = Field(..., description="Reference answer")
-    question_image_description: Optional[str] = None
-    answer_image_description: Optional[str] = None
-    student_answer: str = Field(..., description="Student answer")
-    total_marks: int = Field(..., description="Total marks")
-    question_type: str = Field(..., description="Question type")
-
-
-EVALUATOR_API = "https://chat-backend-test.prepzy.ai/maths-answer-evaluator"
 SAMPLE_API = "https://chat-backend-test.prepzy.ai/maths-sample-answer-generator"
+OCR_API = "https://chat-backend-test.prepzy.ai/ocr-agent"
+EVAL_API = "https://chat-backend-test.prepzy.ai/student-answer-evaluator"
 
-# EVALUATOR_API = "http://127.0.0.1:8000/maths-answer-evaluator"
-# SAMPLE_API = "http://127.0.0.1:8000/maths-sample-answer-generator"
+def call_ocr_api(uploaded_file):
+    try:
+        files = {
+            "image": (
+                uploaded_file.name,
+                uploaded_file.getvalue(),
+                uploaded_file.type or "image/jpeg"
+            )
+        }
 
-st.set_page_config(page_title="CBSE Answer Evaluator", layout="centered")
+        response = requests.post(OCR_API, files=files)
 
-st.title("📘 CBSE Answer Evaluator")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"OCR API Error: {response.status_code} - {response.text}")
+            return None
 
-col1, col2 = st.columns([3, 1])
+    except Exception as e:
+        st.error(f"OCR Error: {e}")
+        return None
 
-with col1:
-    question = st.text_area(
-        "Question",
-        height=120,
-        placeholder="Enter the question..."
-    )
+def display_diagrams(diagrams, key_prefix):
+    updated_diagrams = []
+    for i, diag in enumerate(diagrams):
+        col1, col2 = st.columns([4, 1])
 
-with col2:
-    class_name = st.selectbox(
-        "Class",
-        options=("CLASS 6","CLASS 7","CLASS 8","CLASS 9", "CLASS 10", "CLASS 11", "CLASS 12")
-    )
-    
-if "sample_answer_html" not in st.session_state:
-    st.session_state.sample_answer_html = None
+        with col1:
+            image_bytes = base64.b64decode(diag["base64"])
+            st.image(image_bytes, use_container_width=True)
 
-if "sample_answer_text" not in st.session_state:
-    st.session_state.sample_answer_text = None
+        with col2:
+            remove = st.checkbox("Remove", key=f"{key_prefix}_remove_{i}")
 
-if "question_image_description" not in st.session_state:
-    st.session_state.question_image_description = None
+        if not remove:
+            updated_diagrams.append(diag)
 
-if "answer_image_description" not in st.session_state:
-    st.session_state.answer_image_description = None
+    return updated_diagrams
 
+if "answer_text" not in st.session_state:
+    st.session_state.answer_text = ""
 
-# =========================
-# 📸 QUESTION IMAGE
-# =========================
-st.subheader("🖼️ Upload Question Diagram (Optional)")
+if "answer_diagrams" not in st.session_state:
+    st.session_state.answer_diagrams = []
 
-question_image = st.file_uploader(
-    "Upload Question Image",
-    type=["png", "jpg", "jpeg"],
-    key="question_img"
+if "api_data" not in st.session_state:
+    st.session_state.api_data = {}
+
+if "show_solution" not in st.session_state:
+    st.session_state.show_solution = True
+
+if "show_rubric" not in st.session_state:
+    st.session_state.show_rubric = True
+
+st.set_page_config(page_title="Maths Sample Answer Generator", layout="wide")
+
+st.title("📘 Maths Sample Answer Generator")
+
+query = st.text_area("Enter your question", height=150)
+
+class_name = st.selectbox(
+    "Select Class",
+    [
+        'CLASS 6','CLASS 7','CLASS 8',
+        'CLASS 9','CLASS 10','CLASS 11','CLASS 12'
+    ]
 )
 
-if question_image:
-    image_bytes = question_image.read()
+uploaded_file = st.file_uploader(
+    "Upload Diagram (optional)", 
+    type=["png", "jpg", "jpeg"]
+)
 
-    with st.spinner("Analyzing question diagram..."):
-        try:
-            st.session_state.question_image_description = generate_image_description(image_bytes)
-            st.success("Question image processed")
-            st.caption(st.session_state.question_image_description)
-        except Exception as e:
-            st.error("Failed to process question image")
-            st.exception(e)
+base64_str = None
+if uploaded_file is not None:
+    file_bytes = uploaded_file.read()
+    st.image(file_bytes, caption="Uploaded Diagram", use_container_width=True)
+    base64_str = base64.b64encode(file_bytes).decode("utf-8")
 
-
-# =========================
-# ✨ SAMPLE ANSWER
-# =========================
-if st.button("✨ Generate Sample Answer"):
-
-    if not question:
-        st.error("Please enter a question first.")
-
+if st.button("Generate Sample Answer"):
+    if not query.strip():
+        st.warning("Please enter a question")
     else:
-        with st.spinner("Generating sample answer..."):
+        payload = {
+            "query": query,
+            "class_name": class_name,
+            "base64": base64_str if base64_str else None
+        }
 
-            try:
-                # 🔥 COMBINE QUESTION + DIAGRAM
-                final_query = question
-
-                if st.session_state.question_image_description:
-                    final_query += (
-                        "\n\n[Diagram Description]\n"
-                        f"{st.session_state.question_image_description}"
-                    )
-
+        try:
+            with st.spinner("Generating answer..."):
                 response = requests.post(
                     SAMPLE_API,
-                    json={
-                        "query": final_query,
-                        "class_name": class_name
-                    }
+                    json=payload,
+                    timeout=150
                 )
 
-                html_response = response.text
+            st.write("Status Code:", response.status_code)
 
-                styled_html = f"""
-                <div style="background-color:white; color:black; padding:15px; border-radius:10px;">
-                    {html_response}
-                </div>
-                """
+            if response.status_code == 200:
+                data = response.json()
+                st.session_state.api_data = data
+                st.session_state.show_solution = True
+                st.session_state.show_rubric = True
+            else:
+                st.error("API returned an error ❌")
+                st.code(response.text)
 
-                st.session_state.sample_answer_html = styled_html
+        except requests.exceptions.Timeout:
+            st.error("Request timed out ⏱️")
 
-                soup = BeautifulSoup(html_response, "html.parser")
-                st.session_state.sample_answer_text = soup.get_text()
+        except requests.exceptions.ConnectionError:
+            st.error("Could not connect to backend 🚫")
 
-                st.success("Sample answer generated!")
-
-            except Exception as e:
-                st.error("Failed to generate sample answer")
-                st.exception(e)
-
-
-# =========================
-# 📖 SHOW SAMPLE ANSWER
-# =========================
-if st.session_state.sample_answer_html:
-
-    st.subheader("📖 Generated Sample Answer")
-
-    components.html(
-        st.session_state.sample_answer_html,
-        height=400,
-        scrolling=True
-    )
-
-
-st.divider()
-
-
-# =========================
-# ✍️ STUDENT ANSWER
-# =========================
-student_answer = st.text_area(
-    "Student Answer",
-    height=200,
-    placeholder="Enter student's answer..."
-)
-
-
-# =========================
-# 📸 STUDENT IMAGE
-# =========================
-st.subheader("🖼️ Upload Student Diagram (Optional)")
-
-student_image = st.file_uploader(
-    "Upload Student Answer Image",
-    type=["png", "jpg", "jpeg"],
-    key="student_img"
-)
-
-if student_image:
-    image_bytes = student_image.read()
-
-    with st.spinner("Analyzing student diagram..."):
-        try:
-            st.session_state.answer_image_description = generate_image_description(image_bytes)
-            st.success("Student image processed")
-            st.caption(st.session_state.answer_image_description)
         except Exception as e:
-            st.error("Failed to process student image")
-            st.exception(e)
+            st.error(f"Unexpected error: {e}")
 
-
-# =========================
-# ⚙️ CONFIG
-# =========================
-st.subheader("📊 Question Configuration")
-
-question_config = st.selectbox(
-    "Select Question Type & Marks",
-    options=(
-        "Very Short (2 marks)",
-        "Short (3 marks)",
-        "Long (5 marks)"
-    )
-)
-
-config_map = {
-    "Very Short (2 marks)": {"type": "very short", "marks": 2},
-    "Short (3 marks)": {"type": "short", "marks": 3},
-    "Long (5 marks)": {"type": "long", "marks": 5}
-}
-
-question_type = config_map[question_config]["type"]
-total_marks = config_map[question_config]["marks"]
-
-
-# =========================
-# 🚀 EVALUATE
-# =========================
-if st.button("🚀 Evaluate Answer"):
-
-    if not question or not student_answer:
-        st.error("Please fill all required fields.")
-
-    elif not st.session_state.sample_answer_text:
-        st.error("Please generate the sample answer first.")
-
-    else:
-
-        payload = Input(
-            question=question,
-            reference_answer=st.session_state.sample_answer_text,
-            question_image_description=st.session_state.question_image_description,
-            answer_image_description=st.session_state.answer_image_description,
-            student_answer=student_answer,
-            total_marks=total_marks,
-            question_type=question_type
+if st.session_state.api_data:
+    with st.expander("📘 Solution", expanded=st.session_state.show_solution):
+        html_content = f"""
+        <div style="background-color:white; color:black; padding:20px;">
+            {st.session_state.api_data.get("solution_html", "No solution returned")}
+        </div>
+        """
+        st.components.v1.html(
+            html_content,
+            height=900,
+            scrolling=True
         )
 
-        with st.spinner("Evaluating answer..."):
+    with st.expander("📊 Rubric", expanded=st.session_state.show_rubric):
+        st.json(st.session_state.api_data.get("rubric", {}))
 
-            try:
-                response = requests.post(
-                    EVALUATOR_API,
-                    json=payload.model_dump()
+st.header("📄 Upload Answer")
+
+a_file = st.file_uploader("Upload Answer Image", type=["png", "jpg", "jpeg"], key="answer_upload")
+
+if st.button("🔍 Do OCR") and a_file:
+    result = call_ocr_api(a_file)
+    if result:
+        st.session_state.answer_text = result.get("final_string", "")
+        st.session_state.answer_diagrams = result.get("diagrams", [])
+        st.session_state.show_solution = False
+        st.session_state.show_rubric = False
+
+st.header("✏️ Answer Input")
+
+st.session_state.answer_text = st.text_area(
+    "Answer Text (Edit if needed)",
+    value=st.session_state.answer_text,
+    height=200
+)
+
+st.header("🖼️ Diagrams")
+
+st.session_state.answer_diagrams = display_diagrams(
+    st.session_state.answer_diagrams,
+    "a"
+)
+
+st.header("📊 Evaluate Answer")
+
+total_marks = st.number_input("Total Marks", min_value=1, max_value=100, value=5)
+
+if st.button("🚀 Evaluate Answer"):
+
+    if not query:
+        st.warning("Question is missing.")
+        st.stop()
+
+    if not st.session_state.answer_text.strip():
+        st.warning("Please provide student answer (typed or OCR).")
+        st.stop()
+
+    if not st.session_state.api_data:
+        st.warning("Please generate sample answer first.")
+        st.stop()
+
+    try:
+        with st.spinner("Evaluating..."):
+
+            a_diagrams_base64 = [
+                d["base64"] for d in st.session_state.answer_diagrams
+            ]
+
+            payload = {
+                "query":query,
+                "student_answer":st.session_state.answer_text,
+                "total_marks":total_marks,
+                "rubric":st.session_state.api_data.get("rubric", {}),
+                "base64": a_diagrams_base64[0] if a_diagrams_base64 else None
+            }
+            print("Payload : ",payload)
+
+            result = requests.post(
+                    EVAL_API,
+                    json=payload,
+                    timeout=150
                 )
+        result = result.json()
+        marks = result.get("marks_awarded", 0)
+        feedback_list = result.get("feedback", [])
 
-                result = response.json()
+        st.subheader(f"✅ Marks Awarded: {marks} / {total_marks}")
+        st.progress(min(marks / total_marks, 1.0))
 
-                st.success("Evaluation completed")
+        st.subheader("📝 Feedback")
 
-                st.subheader("✅ Marks Awarded")
+        if feedback_list:
+            for i, fb in enumerate(feedback_list, 1):
+                st.markdown(f"{i}. {fb}")
+        else:
+            st.info("No feedback available.")
 
-                st.metric(
-                    label="Score",
-                    value=result["marks"]
-                )
+    except Exception as e:
+        st.error(f"Evaluation failed: {e}")
 
-                st.subheader("📝 Student Feedback")
-
-                st.text_area(
-                    "Feedback",
-                    value=result["feedback"],
-                    height=200
-                )
-
-                left_col, right_col = st.columns(2)
-
-                with left_col:
-                    st.subheader("📋 Rubric")
-                    st.json(result["rubric"])
-
-                with right_col:
-                    st.subheader("📊 Evaluation Details")
-                    st.json(result["eval_list"])
-
-            except Exception as e:
-                st.error("Evaluation failed")
-                st.exception(e)
